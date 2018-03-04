@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include "lib_PAE2.h"> //Libreria grafica + configuracion reloj MSP432
-#include <math.h>
 
 #define SEQ_LEFT 1
 #define SEQ_RIGHT 2
@@ -259,30 +258,30 @@ void main(void)
                 estatSeq = SEQ_RIGHT;
                 break;
             case 5://joystick up
-                P5OUT |= 0x40;
-                P2OUT |= 0x40;
-                P2OUT &= 0xE0;
+                P5OUT |= 0x40; //activem LED B
+                P2OUT |= 0x40; //activem LED R
+                P2OUT &= 0xE0; //desactivem LED G
                 temps += augmentTemps;
                 break;
             case 6://joystick down
-                P5OUT |= 0x40;
-                P2OUT |= 0x10;
-                P2OUT &= 0xBF;
+                P5OUT |= 0x40; //activem LED B
+                P2OUT |= 0x10; //activem LED G
+                P2OUT &= 0xBF; //desactivem LED R
                 temps = temps > 0 ? temps-augmentTemps : 0;
                 break;
             case 7://joystick center
-                P5OUT ^= 0x40;
-                P2OUT ^= 0x50;
+                P5OUT ^= 0x40; //invertim LED B
+                P2OUT ^= 0x50; //invertim LEDS R i G
                 break;
             }
         }
 
-        if(estatSeq == SEQ_RIGHT ){
-            seq_dreta(temps);
+        if(estatSeq == SEQ_RIGHT ){ 
+            seq_dreta(temps); //cridem funció que executa la sequencia de LEDS cap a la dreta.
             //sprintf(cadena," seq dreta", estado);
         }
         else if(estatSeq == SEQ_LEFT ){
-            seq_esquerra(temps);
+            seq_esquerra(temps);//cridem funció que executa la sequencia de LEDS cap a lesquerra.
             //sprintf(cadena," seq esquerra", estado);
         }
 
@@ -290,6 +289,15 @@ void main(void)
 	}while(1); //Condicion para que el bucle sea infinito
 }
 
+/**
+ * SEQUENCIA DE LEDS-PORT 7 CAP A L'ESQUERRA
+ * Amb aquesta rutina s'activen els LEDS del port 7 successivament un per un des de l'ultim fins al primer (cap a l'esquerra des del punt de vista de l'usuari)
+ * 
+ * Dades d'entrada: temps de delay entre activació de leds consecutius. 
+ *
+ * Sense valor de sortida
+ *
+ **/
 void seq_esquerra(uint32_t temps){
     for(P7OUT = 128; P7OUT > 0; P7OUT >>= 1){
         delay_t(temps);
@@ -298,6 +306,15 @@ void seq_esquerra(uint32_t temps){
     P7OUT = 0;
 }
 
+/**
+ * SEQUENCIA DE LEDS-PORT 7 CAP A LA DRETA
+ * Amb aquesta rutina s'activen els LEDS del port 7 successivament un per un des del primer fins a l'ultim (cap a la dreta des del punt de vista de l'usuari)
+ * 
+ * Dades d'entrada: temps de delay entre activació de leds consecutius. 
+ *
+ * Sense valor de sortida
+ *
+ **/
 void seq_dreta(uint32_t temps){
     for(P7OUT = 1; P7OUT < 128; P7OUT <<= 1){
         delay_t(temps);
@@ -328,16 +345,26 @@ void PORT3_IRQHandler(void){//interrupcion del pulsador S2
     /**********************************************************+
         A RELLENAR POR EL ALUMNO
 	Para gestionar los estados:
-    Boton S1, estado = 1
-    Boton S2, estado = 2
-    Joystick left, estado = 3
-    Joystick right, estado = 4
-    Joystick up, estado = 5
-    Joystick down, estado = 6
-    Joystick center, estado = 7
+    Boton S1(5.1), estado = 1
+    Boton S2(3.5), estado = 2
+    Joystick left(4.7), estado = 3
+    Joystick right(4.5), estado = 4
+    Joystick up(5.4), estado = 5
+    Joystick down(5.5), estado = 6
+    Joystick center(4.1), estado = 7
+	
+	FLAG INTERUPCIONES:
+	0x02: p.0
+	0x04: p.1
+	0x06: p.2
+	0x08: p.3
+	0x0A: p.4
+	0x0C: p.5
+	0x0E: p.6
+	0x10: p.7
     ***********************************************************/
     switch(flag){
-    case 0x0C:
+    case 0x0C: //pin 3.5
         estado = 2;
         break;
     }
@@ -354,22 +381,32 @@ void PORT4_IRQHandler(void){  //interrupción de los botones. Actualiza el valor 
     /**********************************************************+
         A RELLENAR POR EL ALUMNO BLOQUE switch ... case
 	Para gestionar los estados:
-    Boton S1, estado = 1
-    Boton S2, estado = 2
-    Joystick left, estado = 3
-    Joystick right, estado = 4
-    Joystick up, estado = 5
-    Joystick down, estado = 6
-    Joystick center, estado = 7
+    Boton S1 (5.1), estado = 1
+    Boton S2(3.5), estado = 2
+    Joystick left(4.7), estado = 3
+    Joystick right(4.5, estado = 4
+    Joystick up(5.4), estado = 5
+    Joystick down(5.5), estado = 6
+    Joystick center(4.1), estado = 7
+	
+	FLAG INTERUPCIONES:
+	0x02: p.0
+	0x04: p.1
+	0x06: p.2
+	0x08: p.3
+	0x0A: p.4
+	0x0C: p.5
+	0x0E: p.6
+	0x10: p.7
     ***********************************************************/
 	switch(flag){
-	case 0x04:
+	case 0x04: //4.1
 	    estado = 7;
 	    break;
-	case 0x0C:
+	case 0x0C: //4.5
 	    estado = 4;
 	    break;
-	case 0x10:
+	case 0x10: //4.7
 	    estado = 3;
 	    break;
 	}
@@ -391,22 +428,32 @@ void PORT5_IRQHandler(void){  //interrupción de los botones. Actualiza el valor 
     /**********************************************************+
         A RELLENAR POR EL ALUMNO BLOQUE switch ... case
 	Para gestionar los estados:
-    Boton S1, estado = 1
-    Boton S2, estado = 2
-    Joystick left, estado = 3
-    Joystick right, estado = 4
-    Joystick up, estado = 5
-    Joystick down, estado = 6
-    Joystick center, estado = 7
+    Boton S1(5.1), estado = 1
+    Boton S2(3.5), estado = 2
+    Joystick left(4.7), estado = 3
+    Joystick right(4.5, estado = 4
+    Joystick up(5.4), estado = 5
+    Joystick down(5.5), estado = 6
+    Joystick center(4.1), estado = 7
+	
+	FLAG INTERUPCIONES:
+	0x02: p.0
+	0x04: p.1
+	0x06: p.2
+	0x08: p.3
+	0x0A: p.4
+	0x0C: p.5
+	0x0E: p.6
+	0x10: p.7
     ***********************************************************/
 	switch(flag){
-	case 0x04:
+	case 0x04: //5.1
 	    estado = 1;
 	    break;
-	case 0x0A:
+	case 0x0A: //5.4
 	    estado = 5;
 	    break;
-	case 0x0C:
+	case 0x0C: //5.5
 	    estado = 6;
 	    break;
 	}
