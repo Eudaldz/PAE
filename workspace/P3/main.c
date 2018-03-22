@@ -9,11 +9,11 @@
 #include <stdint.h>
 #include "lib_PAE2.h"> //Libreria grafica + configuracion reloj MSP432
 
-#define SEQ_LEFT 1
-#define SEQ_RIGHT 2
-#define SEQ_INICIAL 0
-#define TICK_SEGONS 32768
-#define TICKS_MILI 33
+#define SEQ_LEFT 1 //constante que concreta el valor 1 para representar que el sentido de la dirección será hacia la izquierda
+#define SEQ_RIGHT 2 //constante que concreta el valor 1 para representar que el sentido de la dirección será hacia la izquierda
+#define SEQ_INICIAL 0 //constante para representar que la secuencia de LEDs aún no ha sido iniciada (antes de usar joystick izq o der)
+#define TICK_SEGONS 32768 // Número de veces que el timer contara pulsaciones de reloj para llegar al segundo
+#define TICKS_MILI 33 // Número de veces que el timer contará las pulsaciones del reloj para llegar al milisegundo
 #define augmentTempsRat 20 //constant per augmentar el temps relativament de la sequencia del port 7
 #define minTemps 10 //constant per delimitar el temps minim de la sequencia del port 7
 #define maxTemps 500 //constant per delimitar el temps maxim de la sequencia del port 7
@@ -22,36 +22,43 @@
 #define lineaMofidicar  6
 
 
-
-char saludo[16] = " HOLA";//max 15 caracteres visibles
+/////////variables chars que nos serán útiles para imprimir posteriormennte en pantalla
 char cadena[16];//Una linea entera con 15 caracteres visibles + uno oculto de terminacion de cadena (codigo ASCII 0)
 char borrado[] = "               "; //una linea entera de 15 espacios en blanco
-char modificarHora[] = "Clock (S1)";
+char modificarHora[] = "Clock (S1)"; 
 char modificarAlarma[] = "Alarm  (S2)";
 char horaString[] = "Hora";
 char alarmaString[]="Alarma";
-char modSegons[] = "      --";
-char modMinuts[] = "   --";
-char modHoras[] = "--";
+char modSegons[] = "      --";//Nos servirá para subrayar los segundos cuando estos sean los que se esten modificando
+char modMinuts[] = "   --";//Nos servirá para subrayar los minutos cuando estos sean los que se esten modificando
+char modHoras[] = "--";//Nos servirá para subrayar las horas cuando estas sean las que se esten modificando
+////////
+
 
 uint8_t linea = 1;
 uint8_t estadoDelay = 0; //variable para controlar el counterDelay
-uint8_t estado=0;
-uint8_t estado_anterior = 8;
+uint8_t estado=0;//estado general servirá para controlar cual es el último GPIO accionado (empieza en 0)
+uint8_t estado_anterior = 8; //
 uint8_t estatSeq = SEQ_INICIAL;//variable para mantener el estado de la sequencia del puerto 7.
-uint8_t estatModificar = 0; // variable para matener el estado de modificacion de relog, o alarma, o no modificando: 0 estat neutre, 1 estat mdificant hora, 2 estat modificant alarma
+uint8_t estatModificar = 0; // variable para matener el estado de modificacion de reloj, o alarma, o no modificando: 0 estat neutre, 1 estat mdificant hora, 2 estat modificant alarma
 uint8_t estadoTiempo = 0; // variable para mantener el estado de modificacion del reloj: 0 estado segundos, 1 estado minutos, 2 estado horas
 uint32_t retraso = 1000;
 uint32_t temps = 1000; //temps inicial de retard de transició de la seqüència dels LEDS del port 7.
 uint32_t counterDelay = 0; //contador  timer para el metodo Delay
 uint32_t counterR = 0; //contador timer para el reloj
 
+//RELOJ
 uint32_t hora = 0;
 uint32_t minuts = 0;
-uint32_t segons = 1; //RELOJ
+uint32_t segons = 1; //Se inicia en 1 con el fin de que no colisione la alarma y el reloj al instante de activar el programa
+/////
+
+//////ALARMA
 uint32_t horaAlarma = 0;
 uint32_t minutsAlarma = 0;
-uint32_t segonsAlarma = 0;//ALARMA
+uint32_t segonsAlarma = 0;
+//////
+
 /**************************************************************************
  * INICIALIZACIÓN DEL CONTROLADOR DE INTERRUPCIONES (NVIC).
  *
@@ -60,6 +67,8 @@ uint32_t segonsAlarma = 0;//ALARMA
  * Sin datos de salida
  *
  **************************************************************************/
+
+
 void init_interrupciones(){
     // Configuracion al estilo MSP430 "clasico":
     // Enable Port 4 interrupt on the NVIC
@@ -110,6 +119,7 @@ void init_LCD(void)
  * Sin datos de salida
  *
  **************************************************************************/
+
 void borrar(uint8_t Linea)
 {
     halLcdPrintLine(borrado, Linea, NORMAL_TEXT); //escribimos una linea en blanco
@@ -124,6 +134,9 @@ void borrar(uint8_t Linea)
  * Sin datos de salida
  *
  **************************************************************************/
+
+//Modificamos la función escribir añadiendo un parámetro que nos permita decidir si el texto que escribimos queremos que tenga los colores
+//invertidos o no
 void escribir(char String[], uint8_t Linea, uint8_t invert)
 {
     if(!invert){
@@ -196,7 +209,6 @@ void init_botons(void)
 
 void init_timer(void){
     //Configuración del Timer A0
-
     TA0CTL = BIT8 + BIT4 + BIT1;
     TA0CCTL0 = CCIE;
     TA0CCR0 = TICKS_MILI; //configuramos el timer para que llame a la interrupcion una vez  por milisegundo.
@@ -341,9 +353,9 @@ void main(void)
     }while(1); //Condicion para que el bucle sea infinito
 }
 
-/*metodo para imprimir la hora en patanlla
-    parametro: linea en pantalla
-*/
+//metodo para imprimir la hora en patanlla
+//parametro: linea en pantalla
+
 void printHora(uint8_t linea2){
     char aux[9];
     sprintf(aux,"%2d:%2d:%2d",hora, minuts,segons);
