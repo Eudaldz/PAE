@@ -11,23 +11,47 @@
 
 #define SEQ_LEFT 1
 #define SEQ_RIGHT 2
-#define SEQ_NULL 0
+#define SEQ_INICIAL 0
 #define TICK_SEGONS 32768
 #define TICKS_MILI 33
+#define augmentTempsRat 20 //constant per augmentar el temps relativament de la sequencia del port 7
+#define minTemps 10 //constant per delimitar el temps minim de la sequencia del port 7
+#define maxTemps 500 //constant per delimitar el temps maxim de la sequencia del port 7
+#define lineaNormal  5
+#define lineaAlarma 8
+#define lineaMofidicar  6
+
+
 
 char saludo[16] = " HOLA";//max 15 caracteres visibles
 char cadena[16];//Una linea entera con 15 caracteres visibles + uno oculto de terminacion de cadena (codigo ASCII 0)
 char borrado[] = "               "; //una linea entera de 15 espacios en blanco
+char modificarHora[] = "Clock (S1)";
+char modificarAlarma[] = "Alarm  (S2)";
+char horaString[] = "Hora";
+char alarmaString[]="Alarma";
+char modSegons[] = "      --";
+char modMinuts[] = "   --";
+char modHoras[] = "--";
+
 uint8_t linea = 1;
+uint8_t estadoDelay = 0; //variable para controlar el counterDelay
 uint8_t estado=0;
 uint8_t estado_anterior = 8;
-uint8_t estatSeq = SEQ_NULL;
-uint8_t estatSeqAnterior = 0;
+uint8_t estatSeq = SEQ_INICIAL;//variable para mantener el estado de la sequencia del puerto 7.
+uint8_t estatModificar = 0; // variable para matener el estado de modificacion de relog, o alarma, o no modificando: 0 estat neutre, 1 estat mdificant hora, 2 estat modificant alarma
+uint8_t estadoTiempo = 0; // variable para mantener el estado de modificacion del reloj: 0 estado segundos, 1 estado minutos, 2 estado horas
 uint32_t retraso = 1000;
 uint32_t temps = 1000; //temps inicial de retard de transició de la seqüència dels LEDS del port 7.
-uint32_t augmentTemps = 100; //constant per augmentar el temps de transició dels leds.
-uint32_t counter = 0;
+uint32_t counterDelay = 0; //contador  timer para el metodo Delay
+uint32_t counterR = 0; //contador timer para el reloj
 
+uint32_t hora = 0;
+uint32_t minuts = 0;
+uint32_t segons = 1; //RELOJ
+uint32_t horaAlarma = 0;
+uint32_t minutsAlarma = 0;
+uint32_t segonsAlarma = 0;//ALARMA
 /**************************************************************************
  * INICIALIZACIÓN DEL CONTROLADOR DE INTERRUPCIONES (NVIC).
  *
@@ -100,10 +124,14 @@ void borrar(uint8_t Linea)
  * Sin datos de salida
  *
  **************************************************************************/
-void escribir(char String[], uint8_t Linea)
-
+void escribir(char String[], uint8_t Linea, uint8_t invert)
 {
-    halLcdPrintLine(String, Linea, NORMAL_TEXT); //Enviamos la String al LCD, sobreescribiendo la Linea indicada.
+    if(!invert){
+        halLcdPrintLine(String, Linea, NORMAL_TEXT); //Enviamos la String al LCD, sobreescribiendo la Linea indicada.
+    }else{
+        halLcdPrintLine(String, Linea, INVERT_TEXT);
+    }
+
 }
 
 /**************************************************************************
@@ -171,29 +199,35 @@ void init_timer(void){
 
     TA0CTL = BIT8 + BIT4 + BIT1;
     TA0CCTL0 = CCIE;
-    TA0CCR0 = TICKS_MILI;
+    TA0CCR0 = TICKS_MILI; //configuramos el timer para que llame a la interrupcion una vez  por milisegundo.
 }
 
 /**************************************************************************
- * DELAY - A CONFIGURAR POR EL ALUMNO - con bucle while
+ * DELAY - A CONFIGURAR POR EL ALUMNO
  *
- * Datos de entrada: Tiempo de retraso. 1 segundo equivale a un retraso de 1000000 (aprox)
+ * 
  *
  * Sin datos de salida
  *
  **************************************************************************/
 void delay_t (uint32_t temps)
 {
-   counter = 0;
-   while(counter < temps); //bucle tonto para perder tiempo.
+   counterDelay = 0;
+   estadoDelay = 1; //activamos el contador en la interrupcion del timer
+   while(counterDelay < temps); //couterDelay se va incrementando en la rutina de interrupcion del contador.
+   estadoDelay = 0; //desactivamos el contador en la interrupcion: ya no es necessario
 }
 
+//metodo para augmentar la variable de tiempo de la sequencia
 void augmentarTemps(void){
-    temps+=augmentTemps;
+    temps+=temps*augmentTempsRat / 100;
+    if(temps > maxTemps)temps = maxTemps;
 }
 
+//metodo para disminuir la variable de tiempo de la sequencia
 void disminuirTemps(){
-    temps = temps > 0 ? temps-augmentTemps : 100;
+    temps -= temps*augmentTempsRat / 100;
+    if(temps < minTemps)temps = minTemps;
 }
 
 /*****************************************************************************
@@ -212,16 +246,6 @@ void config_P7_LEDS (void)
     P7OUT = 0x00; //Init apagats
 }
 
-/*void main(void){
-    WDTCTL = WDTPW+WDTHOLD;
-    init_ucs_16MHz(); //Ajustes del clock (Unified Clock System)
-    init_timer();
-    init_botons();         //Configuramos botones y leds
-    init_interrupciones();  //Configurar y activar las interrupciones de los botones
-    init_LCD(); // Inicializamos la pantalla
-    config_P7_LEDS(); //Inicialitzem els leds PORT 7.
-    while(1);
-}*/
 
 void main(void)
 {
@@ -229,23 +253,27 @@ void main(void)
     WDTCTL = WDTPW+WDTHOLD;         // Paramos el watchdog timer
 
     //Inicializaciones:
-    init_ucs_16MHz(); //Ajustes del clock (Unified Clock System)
+    init_ucs_24MHz(); //Ajustes del clock (Unified Clock System)
     init_timer();
     init_botons();         //Configuramos botones y leds
     init_interrupciones();  //Configurar y activar las interrupciones de los botones
     init_LCD(); // Inicializamos la pantalla
     config_P7_LEDS(); //Inicialitzem els leds PORT 7.
 
-    halLcdPrintLine(saludo,linea, INVERT_TEXT); //escribimos saludo en la primera linea
-    linea++;                    //Aumentamos el valor de linea y con ello pasamos a la linea siguiente
-
+    escribir(modificarHora,0, 0);
+    escribir(modificarAlarma,1, 0);
+    linea++;
+    escribir(horaString, 4, 0);
+    escribir(alarmaString, 7, 0);
+    printHora(lineaNormal);
+    printAlarma(lineaAlarma);
     //Bucle principal (infinito):
     do
     {
+
         if (estado_anterior != estado)          // Dependiendo del valor del estado se encenderá un LED u otro.
         {
-            sprintf(cadena," estado %d", estado);    // Guardamos en cadena la siguiente frase: estado "valor del estado"
-            escribir(cadena,linea);          // Escribimos la cadena al LCD
+
             estado_anterior = estado;          // Actualizamos el valor de estado_anterior, para que no esté siempre escribiendo.
 
             /**********************************************************+
@@ -268,17 +296,13 @@ void main(void)
                  P5OUT ^= 0x40;     // Conmutamos el estado del LED B (bit 6)
                  delay_t(retraso);  // periodo del parpadeo
                  break;
-
             case 1: //boto s1
                 P2OUT |= 0x50; //activem LED R i LED G
                 P5OUT |= 0x40; //activem LED B
-                //if(estatSeq == SEQ_NULL){estatSeq = estatSeqAnterior;}
                 break;
             case 2: //boto s2
                 P2OUT &= 0xAF; //desactivem LED R i LED G
                 P5OUT &= 0xBF; //desactivem LED B
-                //estatSeqAnterior = estatSeq;
-                //estatSeq = SEQ_NULL;
                 break;
             case 3://joystick left
                 P2OUT |= 0x50; //activem LED R i LED G
@@ -309,17 +333,143 @@ void main(void)
 
         if(estatSeq == SEQ_RIGHT ){
             seq_dreta(temps); //cridem funció que executa la sequencia de LEDS cap a la dreta.
-            //sprintf(cadena," seq dreta", estado);
         }
         else if(estatSeq == SEQ_LEFT ){
             seq_esquerra(temps);//cridem funció que executa la sequencia de LEDS cap a lesquerra.
-            //sprintf(cadena," seq esquerra", estado);
         }
 
-        //delay_t(5000);
     }while(1); //Condicion para que el bucle sea infinito
 }
 
+/*metodo para imprimir la hora en patanlla
+    parametro: linea en pantalla
+*/
+void printHora(uint8_t linea2){
+    char aux[9];
+    sprintf(aux,"%2d:%2d:%2d",hora, minuts,segons);
+    escribir(aux,linea2,0);
+}
+
+//metodo para imprimir la hora en pantalla
+//parametro: linea en pantalla
+void printAlarma(uint8_t linea2){
+    char aux[9];
+    sprintf(aux,"%2d:%2d:%2d",horaAlarma, minutsAlarma, segonsAlarma);
+    escribir(aux,linea2,0);
+}
+
+//metodo que incrementa en una unidad, la unidad del reloj <segundos, minutos, horas> segun la variable estadoTiempo y estatModificar
+//este metodo utiliza submetodos separados para reutilizar el incremento de segundos para el contador timer del reloj.
+void incrementar(void){
+
+    switch(estadoTiempo){
+        case 0:
+        incrementar_segons(estatModificar);
+        break;
+        case 1:
+        incrementar_minuts(estatModificar);
+        break;
+        case 2:
+        incrementar_hora(estatModificar);
+        break;
+    }
+
+    printHora(lineaNormal);
+    printAlarma(lineaAlarma);
+}
+
+//metodo para decrementar en una unidad, la unidad del reloj <segundos, minutos, horas> segun la variable estadoTiempo.
+void decrementar(void){
+    switch(estadoTiempo){
+    case 0:
+        if(estatModificar ==1){
+            if(segons >= 1){
+                    segons -= 1;
+                }
+        }if(estatModificar == 2){
+            if(segonsAlarma >= 1){
+                segonsAlarma -= 1;
+            }
+        }
+        break;
+    case 1:
+        if(estatModificar ==1){
+               if(minuts >= 1){
+                       minuts -= 1;
+                   }
+           }if(estatModificar == 2){
+               if(minutsAlarma >= 1){
+                   minutsAlarma -= 1;
+               }
+          }
+    break;
+
+    case 2:
+        if(estatModificar ==1){
+           if(hora >= 1){
+               hora -= 1;
+           }
+       }if(estatModificar == 2){
+           if(horaAlarma >= 1){
+               horaAlarma -= 1;
+           }
+      }
+       break;
+
+    }
+    printHora(lineaNormal);
+    printAlarma(lineaAlarma);
+}
+
+/*metodo que incrementa segundos del reloj o la alarma segun el parametro
+parametro: indica si se tiene que incrementar los segundos del reloj o de la alarma.
+se podia hacer con dos metodos separados y sin parametros.
+*/
+void incrementar_segons(uint8_t estatModificar){
+    if(estatModificar == 1){
+        if(segons == 59){
+            incrementar_minuts(estatModificar);
+            segons = 0;
+        }else{
+            segons+=1;
+        }
+    }else if (estatModificar == 2){
+        if(segonsAlarma == 59){
+           incrementar_minuts(estatModificar);
+           segonsAlarma = 0;
+        }else{
+           segonsAlarma+=1;
+        }
+    }
+}
+
+//metodo que incrementa minutos del reloj o la alarma segun el parametro.
+void incrementar_minuts(uint8_t estatModificar){
+    if(estatModificar == 1){
+        if(minuts == 59){
+            incrementar_hora(estatModificar);
+            minuts = 0;
+        }else{
+            minuts += 1;
+        }
+    }else if(estatModificar == 2){
+        if(minutsAlarma == 59){
+            incrementar_hora(estatModificar);
+            minutsAlarma = 0;
+        }else{
+            minutsAlarma += 1;
+        }
+    }
+}
+
+//metodo que incrementa minutos del reloj o la alarma segun el parametro.
+void incrementar_hora(uint8_t estatModificar){
+    if(estatModificar == 1){
+        hora = (hora + 1)%24;
+    }else if(estatModificar == 2){
+        horaAlarma = (horaAlarma + 1)%24;
+    }
+}
 /**
  * SEQUENCIA DE LEDS-PORT 7 CAP A L'ESQUERRA
  * Amb aquesta rutina s'activen els LEDS del port 7 successivament un per un des de l'ultim fins al primer (cap a l'esquerra des del punt de vista de l'usuari)
@@ -398,6 +548,10 @@ void PORT3_IRQHandler(void){//interrupcion del pulsador S2
     case 0x0C: //pin 3.5
         estado = 2;
         disminuirTemps();
+        estatModificar = 2;
+        escribir(modificarAlarma, 1, 1);
+        escribir(modificarHora, 0, 0);
+        printAuxMod();
         break;
     }
 
@@ -434,12 +588,21 @@ void PORT4_IRQHandler(void){  //interrupción de los botones. Actualiza el valor 
     switch(flag){
     case 0x04: //4.1
         estado = 7;
+        estatModificar = 0;
+        escribir(modificarHora, 0, 0);
+        escribir(modificarAlarma, 1, 0);
+        borrar(3);
+        printAuxMod();
         break;
     case 0x0C: //4.5
         estado = 4;
+        estadoTiempo = (estadoTiempo - 1) % 3;
+        printAuxMod();
         break;
     case 0x10: //4.7
         estado = 3;
+        estadoTiempo = (estadoTiempo + 1) % 3;
+        printAuxMod();
         break;
     }
 
@@ -449,6 +612,20 @@ void PORT4_IRQHandler(void){  //interrupción de los botones. Actualiza el valor 
      ***********************************************/
 
     P4IE |= 0xA2;   //interrupciones Joystick en port 4 reactivadas
+}
+
+void printAuxMod(){
+    borrar(6);
+    borrar(9);
+    if(estatModificar == 1){
+        if(estadoTiempo == 0)escribir(modSegons, 6 ,0);
+        if(estadoTiempo == 1)escribir(modMinuts, 6, 0);
+        if(estadoTiempo == 2)escribir(modHoras, 6, 0);
+    }else if(estatModificar == 2){
+        if(estadoTiempo == 0)escribir(modSegons, 9 ,0);
+        if(estadoTiempo == 1)escribir(modMinuts, 9, 0);
+        if(estadoTiempo == 2)escribir(modHoras, 9, 0);
+    }
 }
 
 //ISR para las interrupciones del puerto 5:
@@ -482,14 +659,20 @@ void PORT5_IRQHandler(void){  //interrupción de los botones. Actualiza el valor 
     case 0x04: //5.1
         estado = 1;
         augmentarTemps();
+        estatModificar = 1;
+        escribir(modificarHora, 0, 1);
+        escribir(modificarAlarma, 1, 0);
+        printAuxMod();
         break;
     case 0x0A: //5.4
         estado = 5;
         augmentarTemps();
+        incrementar();
         break;
     case 0x0C: //5.5
         disminuirTemps();
         estado = 6;
+        decrementar();
         break;
     }
 
@@ -503,10 +686,22 @@ void PORT5_IRQHandler(void){  //interrupción de los botones. Actualiza el valor 
 void TA0_0_IRQHandler(void){
     TA0CCTL0 &= ~CCIE;
     //TA0R = 0;
-    counter += 1;
-    //P2OUT ^= 0x40;      // Conmutamos el estado del LED R (bit 6)
-    //P2OUT ^= 0x10;     // Conmutamos el estado del LED G (bit 4)
-    //P5OUT ^= 0x40;     // Conmutamos el estado del LED B (bit 6)
+    if(estadoDelay == 1)counterDelay += 1; //de esta forma solo contamos cuando sea necesario. estadoDelay se activa en el metodo delay(tiempo)
+    
+    counterR += 1; //este es el counter del reloj, se resetea cada vez que llega a 1000 (un segundo)
+
+    if (counterR == 1000){ //ha pasado un segundo, incrementa el reloj i resetea el counter.
+        if(estatModificar != 1){
+            incrementar_segons(1);
+            printHora(lineaNormal); //actualiza la pantalla para mostrar la hora correcta.
+        }
+
+        if(estatModificar == 0 && hora == horaAlarma && minuts == minutsAlarma && segons == segonsAlarma){
+            escribir("Congratulations!", 3, 1);
+        }
+        counterR = 0;
+    }
+
     TA0CCTL0 &= ~CCIFG;
     TA0CCTL0 |= CCIE;
 
