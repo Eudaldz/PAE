@@ -57,7 +57,7 @@ typedef uint8_t byte;
 //==========================
 
 
-
+#define MAX_TIME_OUT;
 #define OVERWRITE_TEXT 1
 char saludo[16] = " PRACTICA 4 PAE";//max 15 caracteres visibles
 char borrado[] = "               "; //una linea entera de 15 espacios en blanco
@@ -81,6 +81,18 @@ typedef struct DataPacket{
     byte parametros[32];
 }DataPacket;
 
+typedef struct ReadData{
+    byte data[128];
+    byte index;
+}ReadData;
+
+typedef struct IRSensorDetection{
+    byte left;
+    byte center;
+    byte right;
+};
+
+ReadData readData;
 DataPacket readPacket;
 /**************************************************************************
  * INICIALIZACIÓN DEL CONTROLADOR DE INTERRUPCIONES (NVIC).
@@ -225,23 +237,49 @@ void setInterruptionActive(byte isActive){
     UCA2IE |= UCRXIE;
 }
 
-DataPacket RxPacket(){
-    initializeReadPacket();
-    readIndex = 0;
-    setInterruptionActive(1);
-    readingProcessState = 0;
-    DataPacket empty = newDataPacket();
-    Sentit_Dades_Rx();
-    while(readingProcessState == 0);
-    toggleRead = 0;
-    if(readingProcessState == 2){
-        setInterruptionActive(0);
-        return readPacket;
-    }
-    escribir("Fallo", 6);
-    setInterruptionActive(0);
-    return empty;
+byte waitForIndex(byte index){
+    uint32_t timeOut = 0;
+    while(readData.index < index && timeOut < );
 }
+
+DataPacket RxPacket(){
+
+    waitForIndex(5);
+
+    DataPacket readPacket;
+    DataPacket error = newDataPacket();
+
+    if(readData.data[0] != 0xFF && readData.data[1] != 0xFF){
+        return error;
+    }
+
+    readPacket.id = readData.data[2];
+    readPacket.parameterLength = readData.data[3]-2;
+    readPacket.instruction = readData.data[4];
+
+    waitForIndex(6+readPacket.parameterLength);
+
+    byte i = 0;
+    for(i = 0; i < readPacket.parameterLength; i++){
+        readPacket.parametros[i] = readData.data[i+5];
+    }
+    byte checkSum = readData.data[i+5];
+    byte check = readPacket.id+readPacket.parameterLength+2+readPacket.instruction;
+    for(i = 0; i < readPacket.parameterLength; i++) { //Càlcul del checksum
+        check += readPacket.parametros[i];
+    }
+
+    check = ~check;
+
+    if(checkSum != check){
+        return error;
+    }
+
+    readData.index = 0;
+    return readPacket;
+
+}
+
 
 /* funció TxUAC0: envia un array de bytes a la UART  */
 void TxUAC2(byte* bTxdData, byte length) {
@@ -293,35 +331,15 @@ byte TxPacket(DataPacket dp) {
 }
 
 
-//TxPacket() 3 paràmetres: ID del Dynamixel, Mida dels paràmetres, Instruction byte. torna la mida del "Return packet"
-byte TxPacket2(byte bID, byte bParameterLength, byte bInstruction, byte Parametros[32]) {
-    byte bCount,bCheckSum,bPacketLength;
-    byte TxBuffer[32];
-    Sentit_Dades_Tx(); //El pin P3.0 (DIRECTION_PORT) el posem a 1 (Transmetre)
-    TxBuffer[0] = 0xff; //Primers 2 bytes que indiquen inici de trama FF, FF.
-    TxBuffer[1] = 0xff;
-    TxBuffer[2] = bID; //ID del mòdul al que volem enviar el missatge
-    TxBuffer[3] = bParameterLength+2; //Length(Parameter,Instruction,Checksum)
-    TxBuffer[4] = bInstruction; //Instrucció que enviem al Mòdul
-    for(bCount = 0; bCount < bParameterLength; bCount++) { //Comencem a generar la trama que hem d’enviar
-        TxBuffer[bCount+5] = Parametros[bCount];
-    }
-
-    bCheckSum = 0;
-    bPacketLength = bParameterLength+4+2;
-    for(bCount = 2; bCount < bPacketLength-1; bCount++) { //Càlcul del checksum
-        bCheckSum += TxBuffer[bCount];
-    }
-
-    TxBuffer[bCount] = ~bCheckSum; //Escriu el Checksum (complement a 1)
-    for(bCount = 0; bCount < bPacketLength; bCount++) { //Aquest bucle és el que envia la trama al Mòdul Robot
-        TxUAC2_2(TxBuffer[bCount]);
-    }
-
-    while( (UCA2STATW&UCBUSY)); //Espera fins que s’ha transmès el últim byte
-    Sentit_Dades_Rx(); //Posem la línia de dades en Rx perquè el mòdul Dynamixel envia resposta
-    return(bPacketLength);
+DataPacket sendPacket(DataPacket dp){
+    readData.index = 0;
+    setInterruptionActive(1);
+    Sentit_Dades_Tx();
+    TxPacket(dp);
+    Sentit_Dades_Rx();
+    return RxPacket();
 }
+
 
 /**************************************************************************
  * DELAY - con timer A0 ( Nota: Esta función es solo para el apartado 1 de la practica )
@@ -376,19 +394,35 @@ DataPacket getPacket_Led(byte id, byte setActive){
     return dp;
 }
 
+DataPacket doPing(byte id){
+    return sendPacket(getPacket_Ping(id));
+}
+
+IRSensorDetection readIRSensor(){
+    DataPacket dp;
+    dp.id = 100;
+    dp.parameterLength = 2;
+    dp.instruction = 2;
+    dp.parametros[0] = 0x20;
+    dp.parametros[1] = 0x01;
+    DataPacket answer = sendPacket(dp);
+
+}
+
 /**
  * main.c
  */
-void printPacketOnLCD(DataPacket dp){
-    char s[1];
-    sprintf(s, "%02x", dp.instruction);
-    escribir(s, 7);
+void printPacketOnLCD(DataPacket dp, byte line){
+    char s[20];
+    sprintf(s, "id: %d, err: %d", dp.id, dp.instruction);
+    escribir(s, line);
 }
 
+ReadData getReadData(){
+    return readData;
+}
 
-
-void main(void)
-  {
+void main(void){
 	WDT_A->CTL = WDT_A_CTL_PW | WDT_A_CTL_HOLD;		// stop watchdog timer
 
     //Inicializaciones:
@@ -397,23 +431,19 @@ void main(void)
     init_timers();
     init_LCD();
     init_UART();
-    setInterruptionActive(0);
+    setInterruptionActive(1);
     halLcdPrintLine(saludo,linea, INVERT_TEXT); //escribimos saludo en la primera linea
     linea++;                    //Aumentamos el valor de linea y con ello pasamos a la linea siguiente
 
-    DataPacket servo_left = getPacket_Ping(SERVO_LEFT);
-    //DataPacket servo_right = getPacket_MoveServo(SERVO_RIGHT, NORMAL_SPEED, FORWARD_RIGHT);
-    TxPacket(servo_left);
-    DataPacket servo_left_status = RxPacket();
-    //TxPacket(servo_right);
-    //DataPacket servo_right_status = RxPacket();
-
-    printPacketOnLCD(servo_left_status);
-
-
-
+    DataPacket servoLeft = doPing(10);
+    DataPacket servoRight = doPing(50);
+    printPacketOnLCD(servoLeft,6);
+    printPacketOnLCD(servoRight,7);
     while(1);
+
 }
+
+
 
 
 /**************************************************************************
@@ -433,9 +463,7 @@ void TA0_0_IRQHandler(void){
 
         TA0CCTL0 &= ~CCIE; // Interrupt disabled
         TA0CCTL0 &= ~CCIFG; // No interrupt pending
-
         timer += 1; // Aumentamos el valor del contador del timer
-
         TA0CCTL0 |= CCIE; // Interrupt enabled
 
 }
@@ -444,35 +472,8 @@ void TA0_0_IRQHandler(void){
 
 void EUSCIA2_IRQHandler(void) { //interrupcion de recepcion en la UART A2
     UCA2IE &= ~UCRXIE; //Interrupciones desactivadas en RX
-    uint8_t readData = UCA2RXBUF;
-    escribir("Interrupcion", 7);
-
-    if(readIndex == 0 || readIndex == 1){
-        if(readData != 0xFF) readingProcessState = 1;
-        else escribir("Primer Dato", 7);
-    }else if(readIndex == 2){
-        readPacket.id = readData;
-    }else if(readIndex == 3){
-        readPacket.parameterLength = readData;
-    }else if(readIndex == 4){
-        readPacket.instruction = readData;
-    }else if(readIndex > 4 & readIndex < 5 + readPacket.parameterLength){
-        readPacket.parametros[readIndex - 5] = readData;
-    }else if(readIndex = 5 + readPacket.parameterLength){
-        byte bCheckSum = readPacket.id+readPacket.parameterLength+readPacket.instruction;
-        byte bCount;
-        for(bCount = 0; bCount < readPacket.parameterLength; bCount++) { //Càlcul del checksum
-            bCheckSum += readPacket.parametros[bCount];
-        }
-        if(bCheckSum == readData){
-            readingProcessState = 2;
-        }
-        else{
-            readingProcessState = 1;
-        }
-    }
-    readIndex++;
-
+    readData.data[readData.index] = UCA2RXBUF;
+    readData.index = readData.index + 1;
     UCA2IE |= UCRXIE; //Interrupciones reactivadas en RX
 }
 
