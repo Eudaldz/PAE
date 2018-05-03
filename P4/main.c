@@ -9,22 +9,20 @@ typedef uint8_t byte;
 //==DIRECTION================
 //===========================
 
-#define FORWARD_RIGHT 4
+#define FORWARD_RIGHT 1
 #define BACKWARD_RIGHT 0
-#define FORWARD_LEFT 4
+#define FORWARD_LEFT 1
 #define BACKWARD_LEFT 0
 
 //===========================
 //===========================
 
-
-
-//==SERVO_ID=================
+//==========IDS==============
 //===========================
 
-#define SERVO_RIGHT 2
-#define SERVO_LEFT 3
-
+#define LEFT_ACTUATOR 2
+#define RIGHT_ACTUATOR 3
+#define SENSOR 4
 
 //===========================
 //===========================
@@ -48,59 +46,59 @@ typedef uint8_t byte;
 
 //==SPEEDS==================
 //==========================
-
+#define MIN_SPEED 1
 #define LOW_SPEED 100
 #define NORMAL_SPEED 300
 #define HIGH_SPEED 500
+#define MAX_SPEED 1023
 
 //==========================
 //==========================
 
+//TIEMPO MAXIMO DE LECTURA
+#define READ_TIME_OUT 2000
 
-#define MAX_TIME_OUT;
-#define OVERWRITE_TEXT 1
-char saludo[16] = " PRACTICA 4 PAE";//max 15 caracteres visibles
-char borrado[] = "               "; //una linea entera de 15 espacios en blanco
 
-uint8_t linea = 1;
-uint8_t timer = 0;  // Contador del timer A0
-uint8_t Byte_Recibido = 0;
-byte parametros[16];
-uint16_t velocidad_right = 300;
-uint16_t velocidad_left = 300;
-uint8_t readIndex = 0;
-byte toggleRead = 0;
-byte readingProcessState = 0; //Indicates if error or success
+#define EMPTY_LINE "               "
+
+
+// TIMER A0 counter
+uint32_t timer = 0;  
+
+byte leftActuator = LEFT_ACTUATOR;
+byte rightActuator = RIGHT_ACTUATOR;
+byte sensor = SENSOR;
 
 
 
+//Input/Output packet
 typedef struct DataPacket{
     byte id;
     byte parameterLength;
     byte instruction;
-    byte parametros[32];
+    byte parameter[32];
 }DataPacket;
 
-typedef struct ReadData{
+//Read buffer.
+struct{
     byte data[128];
     byte index;
-}ReadData;
+}readBuffer;
 
-typedef struct IRSensorDetection{
+
+typedef struct SensorDetection{
     byte left;
     byte center;
     byte right;
 };
 
-ReadData readData;
-DataPacket readPacket;
+//LISTENER NOT IMPLEMENTED YET.
+byte listenerSet = 0;
+void (*onSensorDetectionChanged)(SensorDetection);
+
+
 /**************************************************************************
- * INICIALIZACIÓN DEL CONTROLADOR DE INTERRUPCIONES (NVIC).
- *
- * Sin datos de entrada
- *
- * Sin datos de salida
- *
+ * NVIC Initialization
  **************************************************************************/
 void init_interrupciones(){
 
@@ -113,16 +111,9 @@ void init_interrupciones(){
     __enable_interrupt(); //Habilitamos las interrupciones a nivel global del micro.
 }
 
-
-void initializeReadPacket(){
-    readPacket.id = 0;
-    readPacket.parameterLength = 0;
-    readPacket.instruction = 0;
-    byte i;
-    for(i = 0; i<32; i++){
-        readPacket.parametros[i] = 0;
-    }
-}
+/**************************************************************************
+ * Create new empty DataPacket.
+ **************************************************************************/
 
 DataPacket newDataPacket(){
     DataPacket new;
@@ -131,55 +122,36 @@ DataPacket newDataPacket(){
     new.instruction = 0;
     byte i;
     for(i = 0; i<32; i++){
-        new.parametros[i] = 0;
+        new.parameter[i] = 0;
     }
     return new;
 }
 
 /**************************************************************************
- * INICIALIZACIÓN DE LA PANTALLA LCD.
- *
- * Sin datos de entrada
- *
- * Sin datos de salida
- *
+ * LCD Screen initialization.
  **************************************************************************/
-void init_LCD(void)
-{
+void init_LCD(void){
     halLcdInit(); //Inicializar y configurar la pantallita
     halLcdClearScreenBkg(); //Borrar la pantalla, rellenando con el color de fondo
 }
 
 /**************************************************************************
- * BORRAR LINEA
- *
- * Datos de entrada: Linea, indica la linea a borrar
- *
- * Sin datos de salida
- *
+ * Clear text line from screen.
  **************************************************************************/
 
-void borrar(uint8_t Linea)
-{
-    halLcdPrintLine(borrado, Linea, OVERWRITE_TEXT); //escribimos una linea en blanco
+void borrar(uint8_t Linea){
+    halLcdPrintLine(EMPTY_LINE, Linea, OVERWRITE_TEXT); //escribimos una linea en blanco
 }
 
 /**************************************************************************
- * ESCRIBIR LINEA
- *
- * Datos de entrada: Linea, indica la linea del LCD donde escribir
- *                   String, la cadena de caracteres que vamos a escribir
- *
- * Sin datos de salida
- *
+ * Write text line in screen.
  **************************************************************************/
-void escribir(char String[], uint8_t Linea)
-{
+void escribir(char String[], uint8_t Linea){
     halLcdPrintLine(String, Linea, OVERWRITE_TEXT); //Enviamos la String al LCD, sobreescribiendo la Linea indicada.
 }
 
 /**************************************************************************
- * INICIALIZACIÓN DE LOS TIMERS A0 Y A1.
+ * Timer A0 initialization.
  **************************************************************************/
 void init_timers(void){
     //A0
@@ -193,6 +165,10 @@ void init_timers(void){
 
 }
 
+
+/**************************************************************************
+ * Uart initialization
+ **************************************************************************/
 void init_UART(void) {
     UCA2CTLW0 |= UCSWRST;       //Fem un reset de la USCI, desactiva la USCI
     UCA2CTLW0 |= UCSSEL__SMCLK; //UCSYNC=0 mode asíncron
@@ -216,12 +192,14 @@ void init_UART(void) {
     P3DIR |= BIT0; //Port P3.0 com sortida (Data Direction selector Tx/Rx)
     P3OUT &= ~BIT0; //Inicialitzem Sentit Dades a 0 (Rx)
     UCA2CTLW0 &= ~UCSWRST; //Reactivem la línia de comunicacions sèrie
-    UCA2IE |= UCRXIE; //Això només s’ha d’activar quan tinguem la rutina de recepció
+    UCA2IE |= UCRXIE; //
 }
 
-//Defines
 
-/* funcions per canviar el sentit de les comunicacions */
+/****************************************************************************
+ * Alternate communication direction.
+ *****************************************************************************/
+ 
 void Sentit_Dades_Rx(void) { //Configuració del Half Duplex dels motors: Recepció
     P3OUT &= ~BIT0; //El pin P3.0 (DIRECTION_PORT) el posem a 0 (Rx)
 }
@@ -229,25 +207,47 @@ void Sentit_Dades_Tx(void) { //Configuració del Half Duplex dels motors: Transmi
     P3OUT |= BIT0; //El pin P3.0 (DIRECTION_PORT) el posem a 1 (Tx)
 }
 
+/*******************************************************************************
+ * Start/Stop timer.
+ *******************************************************************************/
 
-void setInterruptionActive(byte isActive){
-    if(!isActive){
-        UCA2IE &= ~UCRXIE;
-    }
-    UCA2IE |= UCRXIE;
+void setTimerActive(byte isActive){
+    timer = 0;
+    if(isActive)TA0CTL |= MC__UP;
+    else TA0CTL &= ~MC__UP;
 }
 
-byte waitForIndex(byte index){
-    uint32_t timeOut = 0;
-    while(readData.index < index && timeOut < );
+/**************************************************************************
+ * Delay for -temps- miliseconds.
+ **************************************************************************/
+void delay_t (uint32_t temps){
+    setTimerActive(1);
+    while(timer < temps);
+    setTimerActive(0);
 }
+
+
+/**************************************************************************
+ * Blocks until readBuffer has -index- elements. Or timeout.
+ **************************************************************************/
+byte waitForReadBuffer(byte index){
+    setTimerActiva(1);
+    while(readBuffer.index < index && timer < READ_TIME_OUT);
+    uint32_t tmp = timer;
+    setTimeActive(0); 
+    if(tmp < READ_TIME_OUT) return 0;
+    return 1;
+}
+
+/**************************************************************************
+ * Reads DataPacket from readBuffer. Waits for buffer to be completed.
+ **************************************************************************/
 
 DataPacket RxPacket(){
-
-    waitForIndex(5);
-
-    DataPacket readPacket;
+    
+    DataPacket readPacket = newDataPacket();
     DataPacket error = newDataPacket();
+    if(waitForReadBuffer(5))return error;
 
     if(readData.data[0] != 0xFF && readData.data[1] != 0xFF){
         return error;
@@ -257,16 +257,16 @@ DataPacket RxPacket(){
     readPacket.parameterLength = readData.data[3]-2;
     readPacket.instruction = readData.data[4];
 
-    waitForIndex(6+readPacket.parameterLength);
+    if(waitForReadBuffer(6+readPacket.parameterLength))return error;
 
     byte i = 0;
     for(i = 0; i < readPacket.parameterLength; i++){
-        readPacket.parametros[i] = readData.data[i+5];
+        readPacket.parameter[i] = readData.data[i+5];
     }
     byte checkSum = readData.data[i+5];
     byte check = readPacket.id+readPacket.parameterLength+2+readPacket.instruction;
     for(i = 0; i < readPacket.parameterLength; i++) { //Càlcul del checksum
-        check += readPacket.parametros[i];
+        check += readPacket.parameter[i];
     }
 
     check = ~check;
@@ -281,7 +281,9 @@ DataPacket RxPacket(){
 }
 
 
-/* funció TxUAC0: envia un array de bytes a la UART  */
+/***************************************************************************************
+ * Sends array of bytes to uca2.
+ ****************************************************************************************/
 void TxUAC2(byte* bTxdData, byte length) {
     Sentit_Dades_Tx();
     byte i;
@@ -293,19 +295,11 @@ void TxUAC2(byte* bTxdData, byte length) {
     Sentit_Dades_Rx();
 }
 
-void TxUAC2_2(byte data){
-    while(!TXD2_READY);
-    UCA2TXBUF = data;
-}
-
-/*void TxDByte(byte bData){
-    while(!TXD_BUFFER_READY_BIT); //wait until data can be loaded.
-    SerialTxDBuffer = bData; //data load to TxD buffer
-}*/
-
-//TxPacket() 3 paràmetres: ID del Dynamixel, Mida dels paràmetres, Instruction byte. torna la mida del "Return packet"
-byte TxPacket(DataPacket dp) {
-    if(dp.instruction == 0x03 && dp.parametros[0] <= 0x05)return 0;
+/****************************************************************************************
+ * Uses previous function to send a DataPacket to uca2.
+ ****************************************************************************************/
+void TxPacket(DataPacket dp) {
+    if(dp.instruction == 0x03 && dp.parametros[0] <= 0x05)return;
     byte bCount,bCheckSum,bPacketLength;
     byte TxBuffer[32];
     TxBuffer[0] = 0xff; //Primers 2 bytes que indiquen inici de trama FF, FF.
@@ -314,8 +308,8 @@ byte TxPacket(DataPacket dp) {
     TxBuffer[3] = dp.parameterLength+2; //Length(Parameter,Instruction,Checksum)
     TxBuffer[4] = dp.instruction; //Instrucció que enviem al Mòdul
 
-    for(bCount = 0; bCount < dp.parameterLength; bCount++) { //Comencem a generar la trama que hem d’enviar
-        TxBuffer[bCount+5] = dp.parametros[bCount];
+    for(bCount = 0; bCount < dp.parameterLength; bCount++) { //Comencem a generar la trama que hem denviar
+        TxBuffer[bCount+5] = dp.parameter[bCount];
     }
 
     bCheckSum = 0;
@@ -327,56 +321,30 @@ byte TxPacket(DataPacket dp) {
     TxBuffer[bCount] = ~bCheckSum; //Escriu el Checksum (complement a 1)
 
     TxUAC2(TxBuffer, bCount+1);
-    return(bPacketLength);
 }
 
-
+/******************************************************************************************
+ * Sugar function to send packet and retrieve answer.
+ *******************************************************************************************/
 DataPacket sendPacket(DataPacket dp){
     readData.index = 0;
-    setInterruptionActive(1);
-    Sentit_Dades_Tx();
     TxPacket(dp);
-    Sentit_Dades_Rx();
     return RxPacket();
 }
 
-
-/**************************************************************************
- * DELAY - con timer A0 ( Nota: Esta función es solo para el apartado 1 de la practica )
- **************************************************************************/
-void delay_t (uint32_t temps)
-{
-
-    TA0CTL |= MC__UP; // Timer encendido (Ahora si comienza a contar el timer)
-    while(timer < temps){} // Bucle necesario para esperar a que el timer llegue al tiempo deseado
-    TA0CTL &= ~MC__UP; // Timer parado
-    timer = 0; //Reiniciamos el contador
-
-
-}
-
-/*void CW_Angle_Limit(byte id){
-    parametros[0] = 6;
-    parametros[1] = 0;
-    parametros[2] = 0;
-    parametros[3] = 0;
-    parametros[4] = 0;
-    TxPacket(id,5,3,parametros);
-    delay_t(100);
-}*/
-
-DataPacket getPacket_MoveServo(byte id, uint16_t speed, byte sentido){
+DataPacket moveActuatorPacket(byte id, uint16_t speed, byte sentido){
+    speed = speed % (MAX_SPEED+1);
     DataPacket dp;
     dp.id = id;
     dp.parameterLength = 3;
     dp.instruction = 0x03;
-    dp.parametros[0] = 0x20;
-    dp.parametros[1] = (byte)speed;
-    dp.parametros[2] = (byte)(speed>>8) + sentido;
+    dp.parameter[0] = 0x20;
+    dp.parameter[1] = (byte)speed;
+    dp.parameter[2] = (byte)(speed>>8) + sentido<<2;
     return dp;
 }
 
-DataPacket getPacket_Ping(byte id){
+DataPacket pingPacket(byte id){
     DataPacket dp;
     dp.id = id;
     dp.parameterLength = 0x0;
@@ -384,13 +352,13 @@ DataPacket getPacket_Ping(byte id){
     return dp;
 }
 
-DataPacket getPacket_Led(byte id, byte setActive){
+DataPacket servoLedPacket(byte id, byte setActive){
     DataPacket dp;
     dp.id = id;
     dp.parameterLength = 2;
     dp.instruction = 0x03;
-    dp.parametros[0] = 0x19;
-    dp.parametros[1] = 0x01;
+    dp.parameter[0] = 0x19;
+    dp.parameter[1] = 0x01;
     return dp;
 }
 
@@ -398,51 +366,119 @@ DataPacket doPing(byte id){
     return sendPacket(getPacket_Ping(id));
 }
 
-IRSensorDetection readIRSensor(){
+DataPacket sensorCmpValue(uint16_t value){
     DataPacket dp;
-    dp.id = 100;
+    dp.id = sensor;
+    dp.parameterLenth = 3;
+    dp.instruction = 0x03;
+    dp.parameter[0] = 0x14;
+    dp.paremeter[1] = (byte)value; 
+    dp.parameter[2] = (byte)(value>>8);
+    return dp;
+}
+
+DataPacket sensorDetectionFlag(){
+    DataPacket dp;
+    dp.id = sensor;
     dp.parameterLength = 2;
-    dp.instruction = 2;
-    dp.parametros[0] = 0x20;
-    dp.parametros[1] = 0x01;
-    DataPacket answer = sendPacket(dp);
-
+    dp.instruction = 0x02;
+    dp.parameter[0] = 0x20;
+    dp.parameter[1] = 0x01;
+    return dp;
 }
 
-/**
- * main.c
- */
-void printPacketOnLCD(DataPacket dp, byte line){
-    char s[20];
-    sprintf(s, "id: %d, err: %d", dp.id, dp.instruction);
-    escribir(s, line);
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/******************************************************************************************************
+*        PUBLIC LIBRARY
+*
+*********************************************************************************************************/
+
+void moveLeft(int16_t speed){
+    byte direction;
+    if(speed >= 0){
+        direction = FORWARD_LEFT;
+        speed = speed > MAX_SPEED ? MAX_SPEED : speed;
+    }else{
+        direction = BACKWARD_LEFT;
+        speed = speed < -MAX_SPEED ? MAX_SPEED : -speed;
+    }
+    sendPacket(moveActuatorPacket(leftActuator, speed, direction));
 }
 
-ReadData getReadData(){
-    return readData;
+void moveRight(int16_t speed){
+    byte direction;
+    if(speed >= 0){
+        direction = FORWARD_RIGHT;
+        speed = speed > MAX_SPEED ? MAX_SPEED : speed;
+    }else{
+        direction = BACKWARD_RIGHT;
+        speed = speed < -MAX_SPEED ? MAX_SPEED : -speed;
+    }
+    sendPacket(moveActuatorPacket(rightActuator, speed, direction));
 }
 
-void main(void){
-	WDT_A->CTL = WDT_A_CTL_PW | WDT_A_CTL_HOLD;		// stop watchdog timer
+void moveForward(int16_t speed){
+    speed = speed > 0 ? (speed > MAX_SPEED ? MAX_SPEED : speed) : 0;
+    sendPacket(moveActuatorPacket(leftActuator, speed, LEFT_FORWARD));
+    sendPacket(moveActuatorPacket(rightActuator, speed, RIGHT_FORWARD));
+}
 
-    //Inicializaciones:
-    init_ucs_24MHz();       //Ajustes del clock (Unified Clock System)
+void moveBackward(int16_t speed){
+    speed = speed > 0 ? (speed > MAX_SPEED ? MAX_SPEED : speed) : 0;
+    sendPacket(moveActuatorPacket(leftActuator, speed, LEFT_BACKWARD));
+    sendPacket(moveActuatorPacket(rightActuator, speed, RIGHT_BACKWARD));
+}
+
+void turnLeft(int16_t speed){
+    speed = speed > 0 ? (speed > MAX_SPEED ? MAX_SPEED : speed) : 0;
+    sendPacket(moveActuatorPacket(leftActuator, speed, LEFT_BACKWARD));
+    sendPacket(moveActuatorPacket(rightActuator, speed, RIGHT_FORWARD));
+}
+
+void turnRight(int16_t speed){
+    speed = speed > 0 ? (speed > MAX_SPEED ? MAX_SPEED : speed) : 0;
+    sendPacket(moveActuatorPacket(leftActuator, speed, LEFT_FORWARD));
+    sendPacket(moveActuatorPacket(rightActuator, speed, RIGHT_BACKWARD));
+}
+
+void stop(){
+    sendPacket(moveActuatorPacket(leftActuator, 0, FORWARD_LEFT));
+    sendPacket(moveActuatorPacket(rightActuator, 0, FORWARD_RIGHT));
+}
+
+
+void setSensorDetectValue(uint16_t value){
+    sendPacket(sensorCmpValue(value));
+}
+
+SensorDetection getSensorDetectionFlag(){
+    DataPacket answer = sendPacket(sensorDetectionFlag());
+    uint16_t value = answer.parameter[0];
+    SensorDetection result;
+    result.left = value&1;
+    result.center = value&2;
+    result.right = value&4;
+    return result;
+}
+
+void setOnSensorDetectionChanged( void onDetection(SensorDetection) ){
+    onSensorDetectionChanged = onDetection;
+    listenerSet = 1;
+}
+
+void initializeController(){
+    WDT_A->CTL = WDT_A_CTL_PW | WDT_A_CTL_HOLD;
+    init_ucs_24MHz();
     init_interrupciones();
     init_timers();
     init_LCD();
     init_UART();
-    setInterruptionActive(1);
-    halLcdPrintLine(saludo,linea, INVERT_TEXT); //escribimos saludo en la primera linea
-    linea++;                    //Aumentamos el valor de linea y con ello pasamos a la linea siguiente
-
-    DataPacket servoLeft = doPing(10);
-    DataPacket servoRight = doPing(50);
-    printPacketOnLCD(servoLeft,6);
-    printPacketOnLCD(servoRight,7);
-    while(1);
-
+    setInterruptionActive(1);	
 }
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 
@@ -460,12 +496,10 @@ void main(void){
 
 //ISR para las interrupciones del Timer A0 (Apartado 1 de la practica):
 void TA0_0_IRQHandler(void){
-
-        TA0CCTL0 &= ~CCIE; // Interrupt disabled
-        TA0CCTL0 &= ~CCIFG; // No interrupt pending
-        timer += 1; // Aumentamos el valor del contador del timer
-        TA0CCTL0 |= CCIE; // Interrupt enabled
-
+    TA0CCTL0 &= ~CCIE; // Interrupt disabled
+    TA0CCTL0 &= ~CCIFG; // No interrupt pending
+    timer += 1; // Aumentamos el valor del contador del timer
+    TA0CCTL0 |= CCIE; // Interrupt enabled
 }
 
 
